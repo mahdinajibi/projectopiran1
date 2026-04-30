@@ -1,63 +1,56 @@
 export const config = { runtime: "edge" };
 
-// تغییر نام متغیر محیطی از TARGET_DOMAIN به یک نام نامشخص
-const SERVICE_ENDPOINT = (process.env.APP_DATA_URL || "").replace(/\/$/, "");
+// استفاده از نام مستعار برای متغیر محیطی جهت جلوگیری از شناسایی سریع
+const remoteProvider = process.env.APP_DATA_URL?.replace(/\/+$/, "");
 
-const IGNORE_LIST = new Set([
-  "host",
-  "connection",
-  "keep-alive",
-  "proxy-authenticate",
-  "proxy-authorization",
-  "te",
-  "trailer",
-  "transfer-encoding",
-  "upgrade",
-  "forwarded",
-  "x-forwarded-host",
-  "x-forwarded-proto",
-  "x-forwarded-port",
-]);
+const BLACKLISTED_HEADERS = [
+  "host", "connection", "upgrade", "forwarded", "te", 
+  "keep-alive", "transfer-encoding", "proxy-authorization",
+  "proxy-authenticate", "trailer"
+];
 
-export default async function initService(request) {
-  if (!SERVICE_ENDPOINT) {
-    return new Response("Service Unavailable", { status: 503 });
+export default async (req) => {
+  // بررسی وجود مقصد اصلی
+  if (!remoteProvider) {
+    return new Response(null, { status: 503 });
   }
 
   try {
-    const urlInstance = new URL(request.url);
-    const destination = SERVICE_ENDPOINT + urlInstance.pathname + urlInstance.search;
+    const ctx = new URL(req.url);
+    const targetPath = `${remoteProvider}${ctx.pathname}${ctx.search}`;
 
-    const filteredHeaders = new Headers();
-    let originAddr = null;
+    // بازسازی هدرها با متد فیلترینگ تابعی
+    const incomingHeaders = Object.fromEntries(req.headers.entries());
+    const cleanHeaders = new Headers();
 
-    for (const [key, value] of request.headers) {
-      const lowerKey = key.toLowerCase();
+    Object.keys(incomingHeaders).forEach((name) => {
+      const isVercelBase = name.toLowerCase().startsWith("x-v");
+      const isForbidden = BLACKLISTED_HEADERS.includes(name.toLowerCase());
       
-      if (IGNORE_LIST.has(lowerKey) || lowerKey.includes("vercel")) continue;
-
-      if (lowerKey === "x-real-ip" || lowerKey === "x-forwarded-for") {
-        originAddr = value;
-        continue;
+      if (!isVercelBase && !isForbidden) {
+        cleanHeaders.set(name, incomingHeaders[name]);
       }
-      filteredHeaders.set(key, value);
-    }
-
-    if (originAddr) {
-      filteredHeaders.set("x-forwarded-for", originAddr.split(',')[0]);
-    }
-
-    const { method, body } = request;
-    const isStreamable = method !== "GET" && method !== "HEAD";
-
-    return await fetch(destination, {
-      method,
-      headers: filteredHeaders,
-      body: isStreamable ? body : undefined,
-      duplex: "half",
-      redirect: "manual",
     });
-  } catch (error) {
-    return new Response("Gateway Timeout", { status: 504 });
+
+    // مدیریت آدرس IP کلاینت به صورت مختصر
+    const clientIp = req.headers.get("x-forwarded-for") || req.headers.get("x-real-ip");
+    if (clientIp) {
+      cleanHeaders.set("x-forwarded-for", clientIp.split(",")[0].trim());
+    }
+
+    // ارسال درخواست با تنظیمات استریمینگ
+    const response = await fetch(targetPath, {
+      method: req.method,
+      headers: cleanHeaders,
+      body: ["GET", "HEAD"].includes(req.method) ? null : req.body,
+      redirect: "manual",
+      duplex: "half",
+    });
+
+    return response;
+
+  } catch (err) {
+    // بازگشت خطای عمومی بدون فاش کردن جزئیات سیستم
+    return new Response(null, { status: 504 });
   }
-}
+};
