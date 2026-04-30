@@ -1,8 +1,8 @@
 {
   "version": 2 ,
-  "name": "Project-X",
+  "name": "Project-opUs",
   "rewrites": [
-    { "source": "/(.*)", "destination": "/api/core" }
+    { "source": "/(.*)", "destination": "/api/base" }
   ],
   "trailingSlash": false
 }
