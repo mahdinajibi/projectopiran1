@@ -1,0 +1,8 @@
+{
+  "version": 2 ,
+  "name": "Project-X",
+  "rewrites": [
+    { "source": "/(.*)", "destination": "/api/core" }
+  ],
+  "trailingSlash": false
+}
